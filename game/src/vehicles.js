@@ -1,30 +1,49 @@
 // vehicles.js — box-built cars, traffic AI that loops city blocks, arcade
 // player-car physics, and police interceptors.
+//
+// Polish pass: three car kinds (sedan, taxi with a roof sign, van), brake
+// lights that flare when you brake, a car horn (H) that scares nearby peds,
+// and damage smoke — hard crashes leave the player's car smoking until it
+// is swapped for a fresh one.
 import * as THREE from 'three';
 import { CONFIG, PALETTE } from './config.js';
-import { pick, range } from './random.js';
+import { pick, range, coin } from './random.js';
 
 const CAR_COLORS = PALETTE.carPaint;
 const ROADS = [];
 for (let v = -280; v <= 280; v += 80) ROADS.push(v);
 
-export function buildCarMesh(color, isPolice) {
+// kind: 'sedan' | 'taxi' | 'van'. Taxis are yellow with a roof sign; vans
+// are longer and taller. Police cars are always sedans.
+export function buildCarMesh(color, isPolice, kind = 'sedan') {
   const group = new THREE.Group();
+  const isTaxi = kind === 'taxi';
+  const isVan = kind === 'van';
   const paint = new THREE.MeshStandardMaterial({
-    color: isPolice ? PALETTE.policeWhite : color,
+    color: isPolice ? PALETTE.policeWhite : isTaxi ? PALETTE.taxiYellow : color,
     roughness: 0.35,
     metalness: 0.5,
   });
   const dark = new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.2, metalness: 0.3 });
   const glass = new THREE.MeshStandardMaterial({ color: 0x0e2233, roughness: 0.1, metalness: 0.7 });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.62, 4.4), paint);
+  const bodyLen = isVan ? 5.6 : 4.4;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.62, bodyLen), paint);
   body.position.y = 0.55;
   body.castShadow = true;
   group.add(body);
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.58, 2.2), glass);
-  cabin.position.set(0, 1.12, -0.2);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.7, isVan ? 0.85 : 0.58, isVan ? 3.2 : 2.2), glass);
+  cabin.position.set(0, isVan ? 1.25 : 1.12, -0.2);
   cabin.castShadow = true;
   group.add(cabin);
+  if (isTaxi) {
+    // Roof sign: a lit TAXI box so taxis read at a glance.
+    const sign = new THREE.Mesh(
+      new THREE.BoxGeometry(0.9, 0.22, 0.4),
+      new THREE.MeshStandardMaterial({ color: 0xfff2d0, emissive: 0xffe9a8, emissiveIntensity: 1.4 }),
+    );
+    sign.position.set(0, 1.55, -0.2);
+    group.add(sign);
+  }
   if (isPolice) {
     const skirt = new THREE.Mesh(new THREE.BoxGeometry(2.02, 0.3, 4.42), new THREE.MeshStandardMaterial({ color: PALETTE.policeBlack, roughness: 0.5 }));
     skirt.position.y = 0.32;
@@ -43,7 +62,8 @@ export function buildCarMesh(color, isPolice) {
   }
   const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.28, 10);
   const wheelMat = new THREE.MeshStandardMaterial({ color: 0x0c0d10, roughness: 0.9 });
-  for (const [wx, wz] of [[-0.95, 1.45], [0.95, 1.45], [-0.95, -1.45], [0.95, -1.45]]) {
+  const wheelZ = isVan ? 1.9 : 1.45;
+  for (const [wx, wz] of [[-0.95, wheelZ], [0.95, wheelZ], [-0.95, -wheelZ], [0.95, -wheelZ]]) {
     const w = new THREE.Mesh(wheelGeo, wheelMat);
     w.rotation.z = Math.PI / 2;
     w.position.set(wx, 0.36, wz);
@@ -56,6 +76,22 @@ export function buildCarMesh(color, isPolice) {
     hl.position.set(wx, 0.6, 2.22);
     group.add(hl);
   }
+  // Brake lights: dim at rest, flaring when the player brakes.
+  const brakeMat = new THREE.MeshStandardMaterial({ color: 0x881111, emissive: 0xff2222, emissiveIntensity: 0.4 });
+  for (const [wx, name] of [[-0.7, 'brakeL'], [0.7, 'brakeR']]) {
+    const bl = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.14, 0.08), brakeMat);
+    bl.position.set(wx, 0.6, -2.22);
+    bl.name = name;
+    group.add(bl);
+  }
+  // Damage smoke: a dark cone over the hood, hidden until a hard crash.
+  const smoke = new THREE.Mesh(
+    new THREE.ConeGeometry(0.7, 2.2, 8),
+    new THREE.MeshStandardMaterial({ color: 0x222222, transparent: true, opacity: 0, roughness: 1 }),
+  );
+  smoke.position.set(0, 1.8, 1.2);
+  smoke.name = 'smoke';
+  group.add(smoke);
   return group;
 }
 
@@ -66,8 +102,8 @@ export class VehicleSys {
     this.spawnTimer = 0;
   }
 
-  makeCar(x, z, heading, color, isPolice) {
-    const mesh = buildCarMesh(color, isPolice);
+  makeCar(x, z, heading, color, isPolice, kind = 'sedan') {
+    const mesh = buildCarMesh(color, isPolice, kind);
     mesh.position.set(x, 0, z);
     mesh.rotation.y = heading;
     this.G.scene.add(mesh);
@@ -75,12 +111,14 @@ export class VehicleSys {
       mesh, x, z, heading,
       speed: 0,
       color,
+      kind,
       isPolice: !!isPolice,
       isPlayer: false,
       route: null,
       routeIdx: 0,
       wait: 0,
       flash: 0,
+      damage: 0, // 0..1; over 0.4 the car smokes
       dead: false,
     };
     return car;
@@ -92,7 +130,9 @@ export class VehicleSys {
       const { bx, bz } = G.world.randomBlock();
       const loop = G.world.blockLoop(bx, bz);
       const start = loop[Math.floor(G.rng() * loop.length)];
-      const car = this.makeCar(start.x + range(G.rng, -3, 3), start.z + range(G.rng, -3, 3), G.rng() * Math.PI * 2, pick(G.rng, CAR_COLORS), false);
+      // Variety: about 1 in 5 cars is a taxi, 1 in 8 a van.
+      const kind = coin(G.rng, 0.2) ? 'taxi' : coin(G.rng, 0.14) ? 'van' : 'sedan';
+      const car = this.makeCar(start.x + range(G.rng, -3, 3), start.z + range(G.rng, -3, 3), G.rng() * Math.PI * 2, pick(G.rng, CAR_COLORS), false, kind);
       car.route = loop;
       car.routeIdx = 0;
       car.speed = CONFIG.trafficSpeed * range(G.rng, 0.85, 1.1);
@@ -101,7 +141,7 @@ export class VehicleSys {
     // Parked cars along the roads, so stealing one is always possible.
     // (wait is effectively infinite; update() skips parked cars before
     // touching their null route, and exitCar hands them a route again.)
-    for (let i = 0; i < 6; i += 1) {
+    for (let i = 0; i < CONFIG.parkedCount; i += 1) {
       const road = ROADS[Math.floor(G.rng() * ROADS.length)];
       const along = range(G.rng, -260, 260);
       const side = G.rng() > 0.5 ? 1 : -1;
@@ -231,6 +271,7 @@ export class VehicleSys {
     const i = this.cars.indexOf(car);
     if (i >= 0) this.cars.splice(i, 1);
     car.isPlayer = true;
+    car.damage = 0; // a fresh steal is a fresh car
     G.player.car = car;
     G.player.onFoot = false;
     G.player.carSpeed = 0;
@@ -257,6 +298,27 @@ export class VehicleSys {
     G.audio.setEngine(0, false);
   }
 
+  // Brake-light flare: bright while braking or reversing, dim otherwise.
+  setBrakeLights(car, braking) {
+    for (const name of ['brakeL', 'brakeR']) {
+      const m = car.mesh.getObjectByName(name);
+      if (m) m.material.emissiveIntensity = braking ? 2.5 : 0.4;
+    }
+  }
+
+  // Damage smoke: visible while the car is banged up, pulsing with speed.
+  updateSmoke(car, dt) {
+    const smoke = car.mesh.getObjectByName('smoke');
+    if (!smoke) return;
+    if (car.damage > 0.4) {
+      smoke.material.opacity = Math.min(0.55, car.damage * 0.5);
+      const s = 1 + Math.sin(this.G.elapsed * 9) * 0.15;
+      smoke.scale.set(s, 1 + Math.sin(this.G.elapsed * 7) * 0.2, s);
+    } else {
+      smoke.material.opacity = 0;
+    }
+  }
+
   updatePlayerCar(dt, input) {
     const G = this.G;
     const car = G.player.car;
@@ -266,6 +328,11 @@ export class VehicleSys {
     const left = input.down('KeyA') || input.down('ArrowLeft');
     const right = input.down('KeyD') || input.down('ArrowRight');
     const handbrake = input.down('Space');
+    // Horn: a beep that scares nearby pedestrians out of the way.
+    if (input.wasPressed('KeyH')) {
+      G.audio.horn();
+      G.peds.scare(car.x, car.z, 15);
+    }
     let speed = G.player.carSpeed;
     if (fwd) speed += CONFIG.carAccel * dt;
     if (back) speed -= (speed > 0.5 ? CONFIG.carBrake : CONFIG.carAccel * 0.7) * dt;
@@ -274,6 +341,7 @@ export class VehicleSys {
     speed -= speed * 0.35 * dt;
     if (!G.world.isOnRoad(car.x, car.z)) speed -= speed * 0.8 * dt;
     speed = Math.max(-CONFIG.carMaxReverse, Math.min(CONFIG.carMaxSpeed, speed));
+    this.setBrakeLights(car, back || handbrake);
     const steer = (left ? 1 : 0) - (right ? 1 : 0);
     const spdF = Math.min(1, Math.abs(speed) / 12);
     car.heading += steer * CONFIG.carTurn * spdF * dt * (speed >= 0 ? 1 : -1);
@@ -284,6 +352,8 @@ export class VehicleSys {
       if (Math.abs(speed) > 8) {
         G.audio.thud();
         G.hud.flashDamage();
+        // A hard crash bangs the car up; enough of them and it smokes.
+        car.damage = Math.min(1, car.damage + 0.25);
       }
       speed *= -0.25;
     } else {
@@ -309,6 +379,7 @@ export class VehicleSys {
     car.mesh.rotation.y = car.heading;
     G.player.pos.set(car.x, 0, car.z);
     G.player.heading = car.heading;
+    this.updateSmoke(car, dt);
     G.audio.setEngine(Math.abs(speed) / CONFIG.carMaxSpeed, true);
   }
 

@@ -1,5 +1,10 @@
 // main.js — CORAL BAY boot, fixed-step loop, third-person player + car control,
 // day/night, pickups, WASTED/BUSTED/story-complete, and the ?shot= contract.
+//
+// Polish pass: mouse-wheel camera zoom, a sprint FOV kick, run stats (distance,
+// shots, cars stolen, play time) shown on the story-complete screen and saved
+// with the game, a finite pistol reserve (36) with ammo pickups, mission
+// failure when Jax goes down, and a clean input reset on pause.
 import * as THREE from 'three';
 import { CONFIG, STORY } from './config.js';
 import { mulberry32 } from './random.js';
@@ -12,7 +17,7 @@ import { MissionSys } from './missions.js';
 import { HUD } from './hud.js';
 import { AudioSys } from './audio.js';
 import { Input } from './input.js';
-import { saveGame, loadGame, hasSave, clearSave } from './save.js';
+import { saveGame, loadGame, hasSave, clearSave, blankStats } from './save.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.get('shot'); // start | play | chase | end
@@ -26,10 +31,15 @@ class Game {
     this.shake = 0;
     this.camYaw = Math.PI; // face north (-z) at spawn... heading 0 is +z; use PI for -z
     this.camPitch = 0.35;
+    this.camDist = 6.4; // third-person distance; mouse wheel zooms 5..9
     this.camPos = new THREE.Vector3();
     this.elapsed = 0;
     this.saveTimer = 0;
     this.shotFrames = 0;
+    this.acc = 0;
+    this.stats = blankStats();
+    this.lastPos = new THREE.Vector3(-40, 0, 20);
+    this.sprinting = false;
     this.player = {
       pos: new THREE.Vector3(-40, 0, 20),
       heading: Math.PI,
@@ -37,7 +47,7 @@ class Game {
       armor: 0,
       cash: 0,
       ammo: CONFIG.pistolMag,
-      reserve: 999,
+      reserve: CONFIG.pistolReserve,
       onFoot: true,
       car: null,
       carSpeed: 0,
@@ -155,10 +165,13 @@ class Game {
     p.armor = 0;
     p.cash = 0;
     p.ammo = CONFIG.pistolMag;
+    p.reserve = CONFIG.pistolReserve;
     p.onFoot = true;
     if (p.car) {
       this.vehicles.exitCar();
     }
+    this.stats = blankStats();
+    this.lastPos.copy(p.pos);
     this.police.clearAll();
     this.combat.clearEnemies();
     this.missions.index = 0;
@@ -180,9 +193,12 @@ class Game {
     p.armor = d.armor || 0;
     p.cash = d.cash;
     p.ammo = CONFIG.pistolMag;
+    p.reserve = CONFIG.pistolReserve;
     p.onFoot = true;
+    this.stats = { ...blankStats(), ...(d.stats || {}) };
+    this.lastPos.copy(p.pos);
     this.hour = d.hour || CONFIG.startHour;
-    this.missions.index = Math.min(d.missionIndex, 4);
+    this.missions.index = Math.min(d.missionIndex, 5);
     this.missions.done = false;
     this.audio.init();
     this.state = 'playing';
@@ -194,6 +210,7 @@ class Game {
     if (this.state !== 'playing') return;
     this.state = 'paused';
     this.input.unlock();
+    this.input.clearPressed();
     this.audio.setEngine(0, false);
     this.hud.showOverlay('overlay-pause');
     saveGame(this);
@@ -211,7 +228,8 @@ class Game {
     this.audio.buzz();
     this.audio.setEngine(0, false);
     this.audio.setSiren(false);
-    this.player.cash = Math.max(0, this.player.cash - 150);
+    this.player.cash = Math.max(0, this.player.cash - CONFIG.wastedFine);
+    this.missions.onPlayerDown('Jax got wasted — the job is blown.');
     this.hud.showOverlay('overlay-wasted');
     saveGame(this);
   }
@@ -222,7 +240,8 @@ class Game {
     this.audio.buzz();
     this.audio.setEngine(0, false);
     this.audio.setSiren(false);
-    this.player.cash = Math.max(0, this.player.cash - 300);
+    this.player.cash = Math.max(0, this.player.cash - CONFIG.bustedFine);
+    this.missions.onPlayerDown('Jax got busted — the job is blown.');
     this.police.clearAll();
     this.hud.showOverlay('overlay-busted');
     saveGame(this);
@@ -231,8 +250,12 @@ class Game {
   storyComplete() {
     this.state = 'complete';
     this.audio.jingle();
+    const s = this.stats;
+    const km = (s.distanceM / 1000).toFixed(1);
+    const mins = Math.floor(s.playTimeSec / 60);
     document.getElementById('complete-stats').textContent =
-      `The debt is paid. Coral Bay is yours, Jax — $${Math.floor(this.player.cash).toLocaleString('en-US')} in the pocket.`;
+      `The debt is paid. Coral Bay is yours, Jax — $${Math.floor(this.player.cash).toLocaleString('en-US')} in the pocket. ` +
+      `${km} km driven and walked, ${s.shotsFired} shots fired, ${s.carsStolen} cars stolen, ${mins} minutes on the streets.`;
     this.hud.showOverlay('overlay-complete');
     saveGame(this);
   }
@@ -249,7 +272,10 @@ class Game {
     p.heading = 0;
     p.health = CONFIG.playerHealth;
     p.armor = 0;
+    p.ammo = CONFIG.pistolMag;
+    p.reserve = CONFIG.pistolReserve;
     p.onFoot = true;
+    this.lastPos.copy(p.pos);
     this.police.clearAll();
     this.combat.clearEnemies();
     this.state = 'playing';
@@ -300,7 +326,11 @@ class Game {
     if (p.reloadTimer > 0) {
       p.reloadTimer -= dt;
       if (p.reloadTimer <= 0) {
-        p.ammo = CONFIG.pistolMag;
+        // Reload draws from the reserve; an empty reserve leaves the mag dry.
+        const need = CONFIG.pistolMag - p.ammo;
+        const take = Math.min(need, p.reserve);
+        p.ammo += take;
+        p.reserve -= take;
       }
     }
     if (p.invuln > 0) p.invuln -= dt;
@@ -310,12 +340,16 @@ class Game {
       this.elapsed += dt;
       this.hour = (this.hour + CONFIG.hourRate * dt) % 24;
       this.world.setTimeOfDay(this.hour);
+      // Mouse-wheel camera zoom (5..9 m behind the player).
+      if (polled.wheelDelta) {
+        this.camDist = Math.max(5, Math.min(9, this.camDist + polled.wheelDelta * 0.6));
+      }
       // Global keys.
       if (this.input.wasPressed('KeyP')) this.pause();
       if (this.input.wasPressed('KeyM')) this.audio.setMuted(!this.audio.muted);
-      if (this.input.wasPressed('KeyR') && p.onFoot && p.ammo < CONFIG.pistolMag && p.reloadTimer <= 0) {
+      if (this.input.wasPressed('KeyR') && p.onFoot && p.ammo < CONFIG.pistolMag && p.reloadTimer <= 0 && p.reserve > 0) {
         p.reloadTimer = CONFIG.pistolReloadSec;
-        this.audio.blip(440, 0.05, 'square', 0.12);
+        this.audio.reloadClick();
       }
       // Mouse look.
       this.camYaw -= polled.mouseDX * 0.0028;
@@ -323,6 +357,7 @@ class Game {
       if (p.onFoot) {
         this.updateOnFoot(dt, polled);
       } else {
+        this.sprinting = false; // the FOV kick is a foot-only cue
         this.vehicles.updatePlayerCar(dt, this.input);
         if (this.input.wasPressed('KeyE')) this.vehicles.exitCar();
       }
@@ -333,6 +368,10 @@ class Game {
       this.missions.update(dt);
       this.updatePickups(dt);
       this.checkCarHits(dt);
+      // Run stats: distance travelled + play time.
+      this.stats.distanceM += Math.hypot(p.pos.x - this.lastPos.x, p.pos.z - this.lastPos.z);
+      this.lastPos.copy(p.pos);
+      this.stats.playTimeSec += dt;
       // Autosave every 30 s.
       this.saveTimer += dt;
       if (this.saveTimer > 30) {
@@ -372,6 +411,8 @@ class Game {
       p.heading = Math.atan2(mx, mz);
       p.walkPhase += dt * speed * 1.6;
     }
+    // Sprinting widens the camera FOV a touch — a speed cue with no HUD cost.
+    this.sprinting = running && ml > 0.01;
     const pos = { x: p.pos.x, z: p.pos.z };
     this.world.collideCircle(pos, CONFIG.playerRadius);
     p.pos.x = pos.x;
@@ -389,6 +430,7 @@ class Game {
       const car = this.vehicles.nearestCar(p.pos.x, p.pos.z, 4);
       if (car) {
         this.vehicles.enterCar(car);
+        this.stats.carsStolen += 1;
         this.police.addWanted(1);
         this.hud.banner('CAR STOLEN', 'The owner will not be happy. Lose the heat or keep driving.');
       }
@@ -416,18 +458,21 @@ class Game {
       const d = Math.hypot(p.pos.x - pk.x, p.pos.z - pk.z);
       if (d < 2.2) {
         pk.taken = true;
-        pk.respawn = 60;
+        pk.respawn = CONFIG.pickupRespawnSec;
         pk.mesh.visible = false;
         this.audio.pickup();
         if (pk.kind === 'cash') {
           p.cash += CONFIG.cashPickupValue;
           this.hud.banner('PICKUP', `+$${CONFIG.cashPickupValue} found on the street.`);
         } else if (pk.kind === 'armor') {
-          p.armor = Math.min(100, p.armor + 50);
-          this.hud.banner('PICKUP', 'Body armor +50.');
+          p.armor = Math.min(100, p.armor + CONFIG.armorPickupValue);
+          this.hud.banner('PICKUP', `Body armor +${CONFIG.armorPickupValue}.`);
+        } else if (pk.kind === 'ammo') {
+          p.reserve = Math.min(96, p.reserve + CONFIG.ammoPickupValue);
+          this.hud.banner('PICKUP', `Ammo +${CONFIG.ammoPickupValue}.`);
         } else {
-          p.health = Math.min(100, p.health + 50);
-          this.hud.banner('PICKUP', 'Health +50.');
+          p.health = Math.min(100, p.health + CONFIG.healthPickupValue);
+          this.hud.banner('PICKUP', `Health +${CONFIG.healthPickupValue}.`);
         }
       }
     }
@@ -440,7 +485,7 @@ class Game {
       if (car.isPolice) continue;
       const d = Math.hypot(car.x - p.pos.x, car.z - p.pos.z);
       if (d < 2.1 && Math.abs(car.speed) > 3) {
-        this.combat.damagePlayer(12, car);
+        this.combat.damagePlayer(CONFIG.carHitDamage, car);
         // Shove the player out of the way.
         const dx = p.pos.x - car.x;
         const dz = p.pos.z - car.z;
@@ -453,6 +498,12 @@ class Game {
 
   render() {
     const p = this.player;
+    // Sprint FOV kick: 62° at rest, easing toward 68° while sprinting.
+    const targetFov = this.sprinting && this.state === 'playing' ? 68 : 62;
+    if (Math.abs(this.camera.fov - targetFov) > 0.05) {
+      this.camera.fov += (targetFov - this.camera.fov) * 0.12;
+      this.camera.updateProjectionMatrix();
+    }
     // Camera.
     if (this.state === 'menu' && !SHOT) {
       const a = this.elapsed * 0.03;
@@ -472,7 +523,7 @@ class Game {
     } else {
       const fx = Math.sin(this.camYaw);
       const fz = Math.cos(this.camYaw);
-      const dist = 6.4;
+      const dist = this.camDist;
       const tx = p.pos.x - fx * dist;
       const tz = p.pos.z - fz * dist;
       const ty = 2.4 + this.camPitch * 3.2;

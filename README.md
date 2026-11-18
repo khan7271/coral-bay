@@ -1,16 +1,18 @@
 # CORAL BAY — an open-world crime story
 
-[![make.fun](https://img.shields.io/badge/make.fun-bounty-ff6b35)](https://make.fun/bounty/gta6-01)
-[![make.fun](https://img.shields.io/badge/built%20with-make.fun-7c3aed)](https://make.fun)
+[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![rank](https://make.fun/badge/gta6-01/khan7271/coral-bay/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/khan7271/coral-bay/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
 A complete open-world crime game in the spirit of GTA 6, built for the
 [make.fun gta6-01 bounty](https://make.fun/bounty/gta6-01). Playable in a
 desktop browser from static files — no network, no install.
 
 **The story:** Jax Carter comes home to Coral Bay owing $50,000 to Big Sal.
-Five missions take him from a diner errand to a bank heist at Coral Bay Trust:
-steal a car, run three drops past armed guards, survive a 3-star heat wave,
-then grab the cash and lose the cops for good.
+Six missions take him from a diner errand to a bank heist at Coral Bay Trust
+and a final settle-up at Sal's compound: steal a car, run three drops past
+armed guards, survive a 3-star heat wave, grab the vault cash, then hand
+over the cut and walk away clean.
 
 ## How to play
 
@@ -21,35 +23,49 @@ any static server (`node serve.ts` → http://localhost:8080).
 | --- | --- |
 | W A S D | Move / drive |
 | Mouse | Look & aim (click the game to lock the mouse) |
+| Mouse wheel | Zoom the camera in / out |
 | Click / Space | Shoot the pistol |
 | E | Steal / enter a car, exit a car |
-| R | Reload |
-| Shift | Run |
+| H | Horn (while driving — scares peds aside) |
+| R | Reload (draws from a finite reserve) |
+| Shift | Run (widens the camera FOV a touch) |
 | P | Pause (progress saves) |
 | M | Mute |
 
 ## What's in the game
 
 - **A city on foot and by car** — Coral Bay is 640×640 m of roads, blocks,
-  buildings, a beach, an ocean and a pier, with a full day/night cycle.
-- **Traffic and pedestrians** — cars drive the road loops, pedestrians stroll
-  the sidewalks and flee when shots ring out.
+  buildings, a beach with umbrellas, an ocean and a pier, with a full
+  day/night cycle.
+- **Traffic and pedestrians** — sedans, yellow taxis and vans drive the road
+  loops; pedestrians stroll the sidewalks, jog, idle as beach tourists, dodge
+  fast cars and flee when shots ring out. The streets stay populated: a dead
+  ped is replaced after a while.
 - **Cars to steal** — walk up to any parked or moving car and press E. The
-  owner (and the police) will not be happy.
-- **Wanted level and police** — 0–5 stars. Police interceptors chase and ram;
-  at 3+ stars foot cops try to hold you until you're BUSTED. Heat decays
-  when you stay clean.
-- **Missions and a story** — 5 story missions with beacons, objectives,
-  guards, timed survivals and cash rewards. Finish all five to pay the debt.
+  owner (and the police) will not be happy. Hard crashes leave your car
+  smoking; brake lights flare when you brake.
+- **Wanted level and police** — 0–5 stars. Police interceptors chase and ram
+  (at 4+ stars they PIT-manoeuvre); at 3+ stars they set a roadblock across
+  the road ahead, and foot cops sprint in to hold you until you're BUSTED.
+  Heat decays when you stay clean, with a sting and chase music while hot.
+- **Missions and a story** — 6 story missions with beacons, step counters,
+  guards (including heavy enforcers in the finale), timed survivals and cash
+  rewards. Going down fails the active mission. Finish all six to pay the debt.
 - **Combat** — hitscan pistol with tracers, muzzle flash and hitmarkers;
-  armed thugs shoot back; health, armor and ammo pickups around the city.
-- **HUD with minimap** — live minimap (roads, mission marker, police,
-  thugs, player arrow), health/armor bars, cash, clock, wanted stars,
-  objective text and mission banners.
+  headshots deal double damage; armed thugs shoot back; health, armor, cash
+  and ammo pickups around the city.
+- **HUD with minimap** — live minimap (roads, landmarks, mission marker,
+  pickups, police, foot cops, thugs, player arrow with a red ring at 3+
+  stars), health/armor bars, cash (flashes green on gains), clock, wanted
+  stars, objective text with step counter, and mission banners.
 - **Start and save** — title screen, new game / continue, autosave every
-  30 s and on pause, localStorage save, WASTED/BUSTED respawns at the hospital.
-- **Polish** — synthesized WebAudio (engine, shots, sirens, jingles, ambient
-  music), screen shake, damage vignette, procedural textures and dusk lighting.
+  30 s and on pause, localStorage save (v2, migrates v1), run stats (distance,
+  shots, cars stolen, play time) on the story-complete screen, WASTED/BUSTED
+  respawns at the hospital.
+- **Polish** — synthesized WebAudio (engine, shots, sirens, horn, reload
+  clicks, wanted stings, cash register, jingles, ambient music with a chase
+  layer), screen shake, damage vignette, procedural textures (including a
+  neon diner sign), beach umbrellas, park benches, hydrants, and dusk lighting.
 
 ## Tech
 

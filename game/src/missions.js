@@ -1,5 +1,10 @@
-// missions.js — the story chain: five missions, each a list of steps with a
-// beacon marker, objective text and a cash reward. Completing all five wins.
+// missions.js — the story chain: six missions, each a list of steps with a
+// beacon marker, objective text and a cash reward. Completing all six wins.
+//
+// Polish pass: the objective line now shows the step counter (Step 2/4) so
+// the player always knows how far into a mission they are; going down
+// (WASTED/BUSTED) fails the active mission instead of silently restarting
+// it; and 'grab' steps can spawn heavy guards for the finale.
 import { MISSIONS } from './config.js';
 
 export class MissionSys {
@@ -22,6 +27,14 @@ export class MissionSys {
     return this.mission ? this.mission.steps[this.step] : null;
   }
 
+  // "Step 2/4 — <label>": the player always knows where they stand.
+  get stepText() {
+    const s = this.stepDef;
+    if (!s) return '';
+    const total = this.mission.steps.length;
+    return total > 1 ? `Step ${this.step + 1}/${total} — ${s.label}` : s.label;
+  }
+
   start() {
     const G = this.G;
     if (this.done || this.index >= MISSIONS.length) return;
@@ -31,8 +44,19 @@ export class MissionSys {
     this.guardsSpawned = false;
     const m = this.mission;
     G.hud.banner(`MISSION — ${m.name}`, m.brief);
-    G.hud.setObjective(this.stepDef ? this.stepDef.label : '');
+    G.hud.setObjective(this.stepText);
     this.applyStep();
+  }
+
+  // Back to the start of the current mission (used after a respawn).
+  reset() {
+    this.step = 0;
+    this.stepTimer = 0;
+    this.guardsSpawned = false;
+    this.active = false;
+    this.marker = null;
+    this.G.world.setBeacon(0, 0, false);
+    this.G.hud.setObjective('');
   }
 
   applyStep() {
@@ -53,10 +77,12 @@ export class MissionSys {
     if (s.guards && !this.guardsSpawned) {
       this.guardsSpawned = true;
       for (let i = 0; i < s.guards; i += 1) {
-        G.combat.spawnThug(s.x + (i - 0.5) * 8, s.z + 6);
+        // The finale's guards are heavies: tougher, slower, harder hits.
+        const type = s.heavy ? 'heavy' : 'thug';
+        G.combat.spawnThug(s.x + (i - 0.5) * 8, s.z + 6, type);
       }
     }
-    G.hud.setObjective(s.label);
+    G.hud.setObjective(this.stepText);
   }
 
   advance() {
@@ -67,6 +93,7 @@ export class MissionSys {
       // Mission complete.
       G.player.cash += m.reward;
       G.audio.jingle();
+      G.audio.cashRegister();
       G.hud.banner('MISSION COMPLETE', `${m.name} — +$${m.reward}`);
       G.hud.setObjective('');
       G.world.setBeacon(0, 0, false);
@@ -97,6 +124,16 @@ export class MissionSys {
     setTimeout(() => {
       if (G.state === 'playing') this.start();
     }, 2500);
+  }
+
+  // Called when the player goes down: the job is blown, not just paused.
+  // The respawn flow restarts the mission from its first step.
+  onPlayerDown(reason) {
+    if (!this.active) return;
+    const G = this.G;
+    this.reset();
+    G.hud.banner('MISSION FAILED', reason);
+    G.audio.buzz();
   }
 
   update(dt) {

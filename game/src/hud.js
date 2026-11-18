@@ -1,6 +1,11 @@
 // hud.js — the DOM HUD: minimap, health/armor, cash, wanted stars, objective,
 // banners and the menu overlays. The minimap reuses the city's ground texture.
-import { CONFIG } from './config.js';
+//
+// Polish pass: the minimap now shows street pickups (green), landmarks (gold
+// squares) and foot cops (blue dots), the player arrow gets a red ring at 3+
+// stars, the ammo readout turns red when the mag is nearly dry, and the cash
+// readout flashes green when money comes in.
+import { CONFIG, LANDMARKS, MISSIONS } from './config.js';
 
 export class HUD {
   constructor(G) {
@@ -10,6 +15,7 @@ export class HUD {
     this.mapCtx = this.mapCanvas.getContext('2d');
     this.mapImg = null;
     this.bannerTimer = null;
+    this.lastCash = 0;
     this.buildMapImage();
   }
 
@@ -71,6 +77,13 @@ export class HUD {
     d.classList.add('show');
   }
 
+  // Brief green flash on the cash readout when money comes in.
+  flashCash() {
+    const c = document.getElementById('cash');
+    c.style.color = '#37d67a';
+    setTimeout(() => { c.style.color = ''; }, 600);
+  }
+
   showOverlay(id) {
     for (const o of document.querySelectorAll('.overlay')) o.classList.remove('show');
     if (id) document.getElementById(id).classList.add('show');
@@ -81,15 +94,21 @@ export class HUD {
     const p = G.player;
     document.getElementById('health-fill').style.width = `${Math.max(0, p.health)}%`;
     document.getElementById('armor-fill').style.width = `${Math.max(0, p.armor)}%`;
-    document.getElementById('cash').textContent = `$${Math.floor(p.cash).toLocaleString('en-US')}`;
-    document.getElementById('ammo').textContent = p.car
+    const cash = Math.floor(p.cash);
+    if (cash > this.lastCash) this.flashCash();
+    this.lastCash = cash;
+    document.getElementById('cash').textContent = `$${cash.toLocaleString('en-US')}`;
+    const ammoEl = document.getElementById('ammo');
+    ammoEl.textContent = p.car
       ? `${Math.abs(Math.round(p.carSpeed * 3.6))} km/h`
       : `${p.ammo} / ${p.reserve}`;
+    // Low ammo: red readout so the player reloads before the mag runs dry.
+    ammoEl.style.color = !p.car && p.ammo <= 3 ? '#ff5a5a' : '';
     document.getElementById('clock').textContent = G.clockText();
     document.getElementById('mission-label').textContent = G.missions.done
       ? 'STORY COMPLETE'
       : G.missions.mission
-        ? `MISSION ${G.missions.index + 1}/5 — ${G.missions.mission.name}`
+        ? `MISSION ${G.missions.index + 1}/${MISSIONS.length} — ${G.missions.mission.name}`
         : '';
     this.drawMinimap();
   }
@@ -113,6 +132,15 @@ export class HUD {
       ctx.arc(toMap(x), toMap(z), r, 0, Math.PI * 2);
       ctx.fill();
     };
+    // Landmarks: gold squares (bank, pier, diner, garage, safehouse...).
+    ctx.fillStyle = '#ffd25a';
+    for (const lm of Object.values(LANDMARKS)) {
+      ctx.fillRect(toMap(lm.x) - 2.5, toMap(lm.z) - 2.5, 5, 5);
+    }
+    // Street pickups: green dots, so a broke Jax can hunt for cash.
+    for (const pk of G.world.pickups) {
+      if (!pk.taken) dot(pk.x, pk.z, '#37d67a', 2.5);
+    }
     // Mission marker: a pulsing yellow diamond.
     const md = G.missions.markerDistance();
     if (md) {
@@ -130,13 +158,22 @@ export class HUD {
     for (const car of G.vehicles.cars) {
       dot(car.x, car.z, car.isPolice ? '#3b82ff' : '#9aa0a8', car.isPolice ? 4 : 2.5);
     }
-    // Thugs: red dots.
+    // Foot cops: small blue dots. Thugs: red dots.
+    for (const cop of G.police.cops) dot(cop.x, cop.z, '#3b82ff', 2.5);
     for (const e of G.combat.enemies) {
       if (!e.dead) dot(e.x, e.z, '#ff4444', 3);
     }
-    // Player: white arrow pointing along heading.
+    // Player: white arrow pointing along heading. At 3+ stars a red ring
+    // marks how hot the player is.
     const px = toMap(G.player.pos.x);
     const pz = toMap(G.player.pos.z);
+    if (G.police.wanted >= 3) {
+      ctx.strokeStyle = '#ff4444';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px, pz, 10 + Math.sin(performance.now() / 200) * 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.save();
     ctx.translate(px, pz);
     ctx.rotate(Math.atan2(Math.sin(G.player.heading), Math.cos(G.player.heading)) + Math.PI);

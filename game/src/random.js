@@ -1,4 +1,6 @@
-// random.js — tiny seeded RNG (mulberry32) so screenshots are deterministic.
+// random.js — tiny seeded RNG (mulberry32) so screenshots are deterministic,
+// plus the small sampling helpers the systems share. Everything here is pure
+// and seeded: the same seed always builds the same city.
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
@@ -29,4 +31,38 @@ export function shuffle(rng, arr) {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+}
+
+// True with probability p (0..1). Used for rare events: a ped pausing,
+// a traffic car switching loops, a thug's lucky shot.
+export function coin(rng, p) {
+  return rng() < p;
+}
+
+// Box-Muller gaussian, mean 0, std 1, clamped to [-2.5, 2.5] so a single
+// draw can never throw a spawn wildly off. Used for thug scatter and
+// pedestrian idle drift.
+export function gauss(rng) {
+  const u = Math.max(1e-9, rng());
+  const v = Math.max(1e-9, rng());
+  const g = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  return Math.max(-2.5, Math.min(2.5, g));
+}
+
+// Weighted pick: entries are [value, weight]. Falls back to the last entry
+// when the weights sum to ~0, so a bad table can never return undefined.
+export function weightedPick(rng, entries) {
+  let total = 0;
+  for (const [, w] of entries) total += w;
+  if (total <= 0) return entries[entries.length - 1][0];
+  let roll = rng() * total;
+  for (const [value, w] of entries) {
+    roll -= w;
+    if (roll <= 0) return value;
+  }
+  return entries[entries.length - 1][0];
+}
+
+export function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
 }

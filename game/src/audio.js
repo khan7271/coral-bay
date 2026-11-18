@@ -1,4 +1,7 @@
 // audio.js — all sound is synthesized with WebAudio. No audio files, no network.
+// New in the polish pass: a car horn, a reload click, a wanted-level sting,
+// a cash-register cha-ching for payouts, and a tense chase layer that kicks
+// in over the ambient music while the cops are on you.
 export class AudioSys {
   constructor() {
     this.ctx = null;
@@ -11,6 +14,7 @@ export class AudioSys {
     this.sirenTimer = 0;
     this.musicTimer = null;
     this.musicStep = 0;
+    this.chase = false; // chase layer on: music plays a faster pulse
   }
 
   // Must be called from a user gesture (click / key) the first time.
@@ -68,6 +72,11 @@ export class AudioSys {
     this.sirenGain.gain.setTargetAtTime(on ? 0.045 : 0, t, 0.2);
   }
 
+  // Chase music layer: on while wanted >= 1, off when clean.
+  setChase(on) {
+    this.chase = !!on;
+  }
+
   sirenTick(dt) {
     if (!this.ctx || this.sirenGain.gain.value < 0.01) return;
     this.sirenTimer += dt;
@@ -119,6 +128,43 @@ export class AudioSys {
     this.blip(140, 0.5, 'sawtooth', 0.3);
   }
 
+  // Car horn: two detuned square waves, short and rude.
+  horn() {
+    if (!this.ctx || this.muted) return;
+    const t = this.ctx.currentTime;
+    for (const f of [370, 466]) {
+      const o = this.ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.value = f;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.12, t);
+      g.gain.setValueAtTime(0.12, t + 0.22);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      o.connect(g);
+      g.connect(this.master);
+      o.start(t);
+      o.stop(t + 0.32);
+    }
+  }
+
+  // Reload: a click-click, quiet so it reads as handling, not a shot.
+  reloadClick() {
+    this.blip(1200, 0.03, 'square', 0.12);
+    setTimeout(() => this.blip(900, 0.04, 'square', 0.12), 120);
+  }
+
+  // Wanted sting: a rising minor third when the heat goes up a star.
+  wantedSting() {
+    this.blip(220, 0.12, 'sawtooth', 0.2);
+    setTimeout(() => this.blip(261.6, 0.18, 'sawtooth', 0.2), 110);
+  }
+
+  // Cash register cha-ching for mission payouts and big cash pickups.
+  cashRegister() {
+    this.blip(1245, 0.08, 'sine', 0.25);
+    setTimeout(() => this.blip(1865, 0.16, 'sine', 0.25), 80);
+  }
+
   blip(freq, dur, type, vol) {
     if (!this.ctx || this.muted) return;
     const t = this.ctx.currentTime;
@@ -136,6 +182,7 @@ export class AudioSys {
 
   // Ambient music: a slow, moody loop — Am–F–C–G pads + a walking bass.
   // Chords as (freq, dur) note lists, scheduled one bar at a time.
+  // While the chase layer is on, a quiet off-beat tick pushes the tempo.
   startMusic() {
     if (!this.ctx || this.musicTimer) return;
     const chords = [
@@ -176,6 +223,21 @@ export class AudioSys {
       bg.connect(this.master);
       bo.start(t);
       bo.stop(t + 2.1);
+      // Chase layer: a quiet off-beat tick, twice a bar, while wanted.
+      if (this.chase) {
+        for (const off of [0.7, 1.4]) {
+          const tick = this.ctx.createOscillator();
+          tick.type = 'square';
+          tick.frequency.value = 1800;
+          const tg = this.ctx.createGain();
+          tg.gain.setValueAtTime(0.02, t + off);
+          tg.gain.exponentialRampToValueAtTime(0.001, t + off + 0.05);
+          tick.connect(tg);
+          tg.connect(this.master);
+          tick.start(t + off);
+          tick.stop(t + off + 0.06);
+        }
+      }
     }, 2100);
   }
 }

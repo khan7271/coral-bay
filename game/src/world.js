@@ -1,8 +1,13 @@
 // world.js — builds Coral Bay: ground, roads, buildings, beach, ocean, props,
 // the road graph traffic drives on, collision boxes and pickups.
+//
+// Polish pass: the beach gets umbrella meshes to match its ground texture,
+// sidewalks get hydrants and benches, the diner gets a neon sign that glows
+// at dusk, Big Sal's compound stands on the north edge, and street pickups
+// now include ammo crates.
 import * as THREE from 'three';
 import { CONFIG, PALETTE, LANDMARKS } from './config.js';
-import { makeGroundTexture, makeFacadeTexture, makeSignTexture, makeGlowTexture } from './textures.js';
+import { makeGroundTexture, makeFacadeTexture, makeSignTexture, makeNeonSignTexture, makeGlowTexture } from './textures.js';
 import { pick, range, rangeInt } from './random.js';
 
 const ROADS = [];
@@ -111,9 +116,26 @@ export class World {
     for (let i = 0; i < 14; i += 1) {
       this.addPalm(-240 + range(rng, -28, 28), 200 + range(rng, -32, 32));
     }
+    for (let i = 0; i < 6; i += 1) {
+      this.addBench(-240 + range(rng, -26, 26), 200 + range(rng, -30, 30));
+    }
     // Palms along the beach.
     for (let z = -280; z <= 280; z += 40) {
       this.addPalm(262 + range(rng, -4, 4), z + range(rng, -8, 8));
+    }
+    // Beach umbrellas on the sand, matching the dots in the ground texture.
+    for (let i = 0; i < 10; i += 1) {
+      this.addUmbrella(258 + (i % 2) * 16, -240 + i * 52, pick(rng, PALETTE.umbrella));
+    }
+    // Hydrants at scattered intersection corners (small red cylinders).
+    const hydMat = new THREE.MeshStandardMaterial({ color: 0xc23b2e, roughness: 0.6 });
+    for (let i = 0; i < 12; i += 1) {
+      const a = pick(rng, ROADS);
+      const b = pick(rng, ROADS);
+      const hyd = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.35, 0.9, 8), hydMat);
+      hyd.position.set(a + 9, 0.45, b - 9);
+      hyd.castShadow = true;
+      scene.add(hyd);
     }
     // Street lamps at every other intersection corner.
     const lampMat = new THREE.MeshStandardMaterial({ color: 0x22242a, roughness: 0.6, metalness: 0.6 });
@@ -171,7 +193,19 @@ export class World {
       safehouse: ['#3ba86b', '#ffffff'],
       hospital: ['#e8e8e8', '#c23b2e'],
       policeHQ: ['#1c2f6e', '#ffffff'],
+      compound: ['#4a2a5a', '#ffd25a'],
     };
+    // The diner gets a neon sign that glows at dusk instead of a flat board.
+    if (lm.key === 'diner') {
+      const tex = makeNeonSignTexture("MAMA ROSA'S", '#ff7a5c');
+      const sign = new THREE.Mesh(
+        new THREE.PlaneGeometry(26, 6.5),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: false }),
+      );
+      sign.position.set(bx, Math.min(h - 2, 12), bz + 21);
+      this.scene.add(sign);
+      return;
+    }
     const [bg, fg] = colors[lm.key] || ['#333333', '#ffffff'];
     const tex = makeSignTexture(lm.name.toUpperCase(), bg, fg);
     const sign = new THREE.Mesh(
@@ -200,10 +234,40 @@ export class World {
     }
   }
 
+  // A park bench: two slats on a frame.
+  addBench(x, z) {
+    const wood = new THREE.MeshStandardMaterial({ color: 0x7a5c38, roughness: 1 });
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.12, 0.6), wood);
+    seat.position.set(x, 0.55, z);
+    seat.castShadow = true;
+    this.scene.add(seat);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.7, 0.1), wood);
+    back.position.set(x, 0.95, z - 0.28);
+    this.scene.add(back);
+  }
+
+  // A beach umbrella: a tilted cone on a pole.
+  addUmbrella(x, z, color) {
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.07, 0.07, 2.4, 6),
+      new THREE.MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.8 }),
+    );
+    pole.position.set(x, 1.2, z);
+    this.scene.add(pole);
+    const top = new THREE.Mesh(
+      new THREE.ConeGeometry(2.2, 1.0, 8),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.9 }),
+    );
+    top.position.set(x, 2.8, z);
+    top.castShadow = true;
+    this.scene.add(top);
+  }
+
   spawnPickups() {
     const defs = [];
     for (let i = 0; i < 8; i += 1) defs.push('cash');
-    defs.push('armor', 'armor', 'health', 'health');
+    defs.push('armor', 'armor', 'health', 'health', 'ammo', 'ammo');
+    const colors = { cash: 0x37d67a, armor: 0x4b8ad9, health: 0xe84b6b, ammo: 0xffa02e };
     const taken = new Set();
     for (const kind of defs) {
       let x = 0;
@@ -217,7 +281,7 @@ export class World {
           break;
         }
       }
-      const color = kind === 'cash' ? 0x37d67a : kind === 'armor' ? 0x4b8ad9 : 0xe84b6b;
+      const color = colors[kind];
       const mesh = new THREE.Mesh(
         new THREE.BoxGeometry(1.4, 1.4, 0.4),
         new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7 }),

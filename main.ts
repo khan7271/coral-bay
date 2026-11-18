@@ -2,7 +2,7 @@
 // dossier.json from them, using the kit's buildDossier. Node 22 stdlib only.
 // Run locally: mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 // In the grader's container MAKEFUN_OUTPUT_DIR is unset and /output is used.
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -22,6 +22,18 @@ if (existsSync(join(here, 'screenshots'))) {
 // than 993 files in game/ or 48 MiB of game files, or a path under game/ over 1000
 // bytes: game/ counts beside /output's own 1000-entry cap, its screenshots/ and
 // dossier.json).
+//
+// Validate the screenshots up front so a too-big capture fails here with a
+// clear message instead of a cryptic refusal from the scorer.
+for (const shot of ['1-start.jpg', '2-play.jpg', '3-chase.jpg', '4-end.jpg']) {
+  const shotPath = join(here, 'screenshots', shot);
+  if (existsSync(shotPath)) {
+    const { size } = await import('node:fs').then((fs) => fs.statSync(shotPath));
+    if (size > 262144) {
+      throw new Error(`screenshot ${shot} is ${size} bytes (cap 262144) — retake it`);
+    }
+  }
+}
 writeFileSync(
   join(out, 'dossier.json'),
   buildDossier(out, {
@@ -33,3 +45,15 @@ writeFileSync(
   }),
 );
 console.log(`Wrote ${join(out, 'dossier.json')}.`);
+
+// Summary for the build log: how many game files shipped and how big the
+// dossier is, so a bad build is obvious before it is submitted.
+const countFiles = (dir) => {
+  let n = 0;
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    n += e.isDirectory() ? countFiles(join(dir, e.name)) : 1;
+  }
+  return n;
+};
+const dossierBytes = statSync(join(out, 'dossier.json')).size;
+console.log(`CORAL BAY: ${countFiles(join(out, 'game'))} game files, dossier ${dossierBytes} bytes.`);

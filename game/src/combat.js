@@ -1,13 +1,16 @@
 // combat.js — the player's pistol (hitscan), mission thugs that shoot back,
 // tracers, muzzle flash and the WASTED check.
+//
+// Polish pass: headshots deal double damage, a heavy thug type (more health,
+// harder hits, slower) guards the final mission, the dead walk-up loop in
+// playerShoot is gone, and every shot is counted for the run stats.
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { range } from './random.js';
 
 export class Combat {
   constructor(G) {
     this.G = G;
-    this.enemies = []; // {mesh, x, z, heading, health, shootTimer, dead}
+    this.enemies = []; // {mesh, x, z, heading, health, maxHealth, shootTimer, dead, heavy}
     this.tracers = [];
     this.flash = null;
     this.flashLight = null;
@@ -27,12 +30,17 @@ export class Combat {
     this.flashTimer = 0;
   }
 
-  spawnThug(x, z) {
+  // type: 'thug' (pistol, fast) or 'heavy' (slow, tough, hits hard).
+  spawnThug(x, z, type = 'thug') {
     const G = this.G;
+    const heavy = type === 'heavy';
     const g = new THREE.Group();
-    const jacket = new THREE.MeshStandardMaterial({ color: 0x5a2a2a, roughness: 0.85 });
+    const jacket = new THREE.MeshStandardMaterial({ color: heavy ? 0x2a2a3a : 0x5a2a2a, roughness: 0.85 });
     const skin = new THREE.MeshStandardMaterial({ color: 0xb07a55, roughness: 0.8 });
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.8, 0.36), jacket);
+    const torso = new THREE.Mesh(
+      new THREE.BoxGeometry(heavy ? 0.8 : 0.62, heavy ? 0.9 : 0.8, heavy ? 0.48 : 0.36),
+      jacket,
+    );
     torso.position.y = 1.05;
     torso.castShadow = true;
     torso.name = 'torso';
@@ -44,12 +52,25 @@ export class Combat {
     const gun = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.5), new THREE.MeshStandardMaterial({ color: 0x111214 }));
     gun.position.set(0.3, 1.15, 0.4);
     g.add(gun);
+    // Heavies wear a visible vest plate so the player can tell them apart.
+    if (heavy) {
+      const vest = new THREE.Mesh(
+        new THREE.BoxGeometry(0.7, 0.5, 0.42),
+        new THREE.MeshStandardMaterial({ color: 0x1c1e24, roughness: 0.6, metalness: 0.4 }),
+      );
+      vest.position.y = 1.1;
+      g.add(vest);
+    }
     g.position.set(x, 0, z);
     G.scene.add(g);
-    const e = { mesh: g, x, z, heading: 0, health: CONFIG.thugHealth, shootTimer: 1 + G.rng() * 1.5, dead: false, bar: null };
-    // Health bar sprite above the head.
-    const barGeo = new THREE.PlaneGeometry(1.1, 0.12);
-    const barMat = new THREE.MeshBasicMaterial({ color: 0xe84b4b, side: THREE.DoubleSide });
+    const maxHealth = heavy ? CONFIG.heavyHealth : CONFIG.thugHealth;
+    const e = {
+      mesh: g, x, z, heading: 0, health: maxHealth, maxHealth,
+      shootTimer: 1 + G.rng() * 1.5, dead: false, heavy, bar: null,
+    };
+    // Health bar sprite above the head (wider for heavies).
+    const barGeo = new THREE.PlaneGeometry(heavy ? 1.5 : 1.1, 0.12);
+    const barMat = new THREE.MeshBasicMaterial({ color: heavy ? 0xff8800 : 0xe84b4b, side: THREE.DoubleSide });
     const bar = new THREE.Mesh(barGeo, barMat);
     bar.position.set(0, 2.15, 0);
     g.add(bar);
@@ -74,6 +95,7 @@ export class Combat {
     if (p.fireTimer > 0 || p.reloadTimer > 0) return;
     p.ammo -= 1;
     p.fireTimer = CONFIG.pistolFireGap;
+    if (G.stats) G.stats.shotsFired += 1;
     G.audio.shot();
     G.peds.scare(p.pos.x, p.pos.z, 40);
     if (G.police.wanted < 1) G.police.addWanted(1);
@@ -99,23 +121,26 @@ export class Combat {
     if (hits.length > 0) {
       const hit = hits[0];
       end = hit.point.clone();
-      let obj = hit.object;
-      while (obj && !obj.userData.owner) obj = obj.parent;
-      // Walk up to the group root and find its owner via traversal instead.
+      // Walk up to the group root: the mesh's parent chain ends at the scene.
       let root = hit.object;
       while (root.parent && root.parent !== G.scene) root = root.parent;
       const enemy = this.enemies.find((e) => e.mesh === root);
       const ped = G.peds.peds.find((q) => q.mesh === root);
       if (enemy) {
-        enemy.health -= CONFIG.pistolDamage;
-        enemy.bar.scale.x = Math.max(0, enemy.health / CONFIG.thugHealth);
-        G.hud.hitmarker(false);
+        // Headshots (the 'head' sphere) deal double damage.
+        const headshot = hit.object.name === 'head';
+        const dmg = headshot ? CONFIG.pistolDamage * CONFIG.pistolHeadshotMult : CONFIG.pistolDamage;
+        enemy.health -= dmg;
+        enemy.bar.scale.x = Math.max(0, enemy.health / enemy.maxHealth);
+        // A headshot shows the kill-style hitmarker even when it does not
+        // finish the enemy — the player needs the feedback immediately.
+        G.hud.hitmarker(headshot);
         if (enemy.health <= 0) {
           enemy.dead = true;
           enemy.mesh.rotation.x = -Math.PI / 2;
           enemy.mesh.position.y = 0.3;
           G.hud.hitmarker(true);
-          G.player.cash += 25;
+          G.player.cash += CONFIG.thugReward;
         }
       } else if (ped) {
         G.peds.kill(ped);
@@ -177,6 +202,7 @@ export class Combat {
       }
     }
     // Thugs: walk toward the player and shoot with inaccuracy.
+    // Heavies walk slower but hit harder.
     const p = G.player;
     for (const e of this.enemies) {
       if (e.dead) continue;
@@ -188,9 +214,10 @@ export class Combat {
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
       e.heading += Math.max(-3 * dt, Math.min(3 * dt, diff));
+      const walkSpeed = e.heavy ? 2.4 : 3.4;
       if (dist > 9) {
-        e.x += Math.sin(e.heading) * 3.4 * dt;
-        e.z += Math.cos(e.heading) * 3.4 * dt;
+        e.x += Math.sin(e.heading) * walkSpeed * dt;
+        e.z += Math.cos(e.heading) * walkSpeed * dt;
         const pp = { x: e.x, z: e.z };
         G.world.collideCircle(pp, 0.5);
         e.x = pp.x;
@@ -198,11 +225,11 @@ export class Combat {
       }
       e.shootTimer -= dt;
       if (e.shootTimer <= 0 && dist < 42) {
-        e.shootTimer = 1.1 + G.rng() * 0.9;
+        e.shootTimer = e.heavy ? 1.6 + G.rng() * 0.8 : 1.1 + G.rng() * 0.9;
         // Inaccurate: hits ~55% at close range, less far away.
         const hitChance = Math.max(0.2, 0.65 - dist * 0.01);
         if (G.rng() < hitChance) {
-          this.damagePlayer(CONFIG.thugDamage, e);
+          this.damagePlayer(e.heavy ? CONFIG.heavyDamage : CONFIG.thugDamage, e);
           G.audio.blip(140, 0.08, 'square', 0.2);
         } else {
           G.audio.blip(300, 0.05, 'square', 0.08);

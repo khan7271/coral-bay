@@ -1,5 +1,9 @@
 // textures.js — every texture is drawn in code on a canvas. No downloaded art.
 // The ground texture doubles as the minimap base, so the map and the city agree.
+//
+// Polish pass: the beach now shows umbrellas and a volleyball court from
+// above, facades get awnings on some variants, and there is a neon sign
+// texture for the diner so it glows at dusk.
 import * as THREE from 'three';
 import { CONFIG, PALETTE } from './config.js';
 
@@ -35,6 +39,23 @@ export function makeGroundTexture() {
     ctx.fillRect(toPx(s.beachX + 44), 0, PX - toPx(s.beachX + 44), PX);
     ctx.fillStyle = '#d9c08a';
     ctx.fillRect(toPx(s.beachX), 0, toPx(s.beachX + 44) - toPx(s.beachX), PX);
+    // Beach umbrellas: coloured dots on the sand, with a volleyball court.
+    const umbrellaCols = ['#d95f4b', '#4b8ad9', '#e8b93b', '#3ba86b'];
+    for (let i = 0; i < 10; i += 1) {
+      const ux = toPx(258 + (i % 2) * 16);
+      const uz = toPx(-240 + i * 52);
+      ctx.fillStyle = umbrellaCols[i % umbrellaCols.length];
+      ctx.beginPath();
+      ctx.arc(ux, uz, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(toPx(256), toPx(-24), toPx(288) - toPx(256), toPx(24) - toPx(-24));
+    ctx.beginPath();
+    ctx.moveTo(toPx(272), toPx(-24));
+    ctx.lineTo(toPx(272), toPx(24));
+    ctx.stroke();
     // Park block (south-west) in a lighter green with paths.
     ctx.fillStyle = '#5d8f52';
     ctx.fillRect(toPx(-280), toPx(160), toPx(-200) - toPx(-280), toPx(240) - toPx(160));
@@ -82,6 +103,7 @@ export function makeGroundTexture() {
 }
 
 // A building facade: lit windows on a coloured wall, ground-floor storefront.
+// Every third variant gets a striped awning over the storefront.
 export function makeFacadeTexture(baseColor, variant, litRatio) {
   return canvasTexture(256, (ctx) => {
     ctx.fillStyle = baseColor;
@@ -112,6 +134,13 @@ export function makeFacadeTexture(baseColor, variant, litRatio) {
     ctx.fillStyle = '#e8e8e8';
     ctx.font = 'bold 15px sans-serif';
     ctx.fillText(variant % 2 ? 'OPEN' : '24 HRS', 12, 246);
+    // Striped awning on every third variant.
+    if (variant % 3 === 0) {
+      for (let i = 0; i < 8; i += 1) {
+        ctx.fillStyle = i % 2 ? '#e8e8e8' : '#c25a3a';
+        ctx.fillRect(i * 32, 196, 32, 16);
+      }
+    }
   });
 }
 
@@ -131,6 +160,30 @@ export function makeSignTexture(text, bg, fg) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, 256, 50);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// A neon sign: bright text on a dark board with a glow halo, for the diner.
+// The material using it should be MeshBasicMaterial so it stays bright at night.
+export function makeNeonSignTexture(text, glowColor) {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#120a18';
+  ctx.fillRect(0, 0, 512, 128);
+  ctx.font = 'bold 58px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = glowColor;
+  ctx.shadowBlur = 28;
+  ctx.fillStyle = glowColor;
+  ctx.fillText(text, 256, 64);
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(text, 256, 64);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
