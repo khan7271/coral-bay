@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CORAL BAY — an open-world crime story</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b0e14;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif; color: #fff; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  .panel { background: rgba(8, 12, 20, 0.55); border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 10px; backdrop-filter: blur(3px); }
+  /* minimap + wanted + objective, top-left */
+  #topleft { position: absolute; top: 14px; left: 14px; display: flex; flex-direction: column; gap: 8px; }
+  #minimap { width: 180px; height: 180px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.35);
+    background: #24303a; box-shadow: 0 4px 18px rgba(0,0,0,0.5); }
+  #wanted { font-size: 26px; letter-spacing: 4px; color: #ffd25a; text-shadow: 0 0 12px rgba(0,0,0,0.8); padding: 2px 10px; }
+  #wanted.hot { color: #ff5347; animation: blink 0.7s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0.55; } }
+  #objective { max-width: 300px; font-size: 14px; line-height: 1.35; padding: 8px 12px; color: #ffe9b0; }
+  /* top-right: cash, clock, mission */
+  #topright { position: absolute; top: 14px; right: 14px; text-align: right; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+  #cash { font-size: 30px; font-weight: 800; color: #7dff9b; text-shadow: 0 2px 8px rgba(0,0,0,0.8); padding: 4px 14px; }
+  #clock { font-size: 16px; padding: 4px 10px; color: #dfe8f2; }
+  #mission-label { font-size: 13px; letter-spacing: 1px; padding: 5px 10px; color: #9fd8ff; text-transform: uppercase; }
+  /* bottom-left: health + armor */
+  #bottomleft { position: absolute; left: 14px; bottom: 14px; width: 260px; display: flex; flex-direction: column; gap: 6px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: 1px; }
+  .bar { flex: 1; height: 14px; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.25); border-radius: 7px; overflow: hidden; }
+  .bar > div { height: 100%; transition: width 0.15s linear; }
+  #health-fill { background: linear-gradient(90deg, #2ecc71, #7dff9b); }
+  #armor-fill { background: linear-gradient(90deg, #3b82ff, #9fd8ff); }
+  /* bottom-right: ammo / speed */
+  #bottomright { position: absolute; right: 14px; bottom: 14px; font-size: 26px; font-weight: 800; padding: 6px 14px; color: #fff; }
+  /* crosshair + hitmarker */
+  #crosshair { position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; transform: translate(-50%, -50%); }
+  #crosshair::before, #crosshair::after { content: ""; position: absolute; background: rgba(255,255,255,0.9); box-shadow: 0 0 4px #000; }
+  #crosshair::before { left: 8px; top: 0; width: 2px; height: 18px; }
+  #crosshair::after { left: 0; top: 8px; width: 18px; height: 2px; }
+  #hitmarker { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; transform: translate(-50%, -50%) rotate(45deg); opacity: 0; }
+  #hitmarker::before, #hitmarker::after { content: ""; position: absolute; background: #fff; }
+  #hitmarker::before { left: 12px; top: 0; width: 2px; height: 26px; }
+  #hitmarker::after { left: 0; top: 12px; width: 26px; height: 2px; }
+  #hitmarker.kill::before, #hitmarker.kill::after { background: #ff5347; }
+  #hitmarker.show { animation: hitpop 0.3s ease-out; }
+  @keyframes hitpop { 0% { opacity: 1; transform: translate(-50%,-50%) rotate(45deg) scale(1.4); } 100% { opacity: 0; transform: translate(-50%,-50%) rotate(45deg) scale(1); } }
+  /* damage flash */
+  #damage { position: absolute; inset: 0; pointer-events: none; opacity: 0;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(255,0,0,0.55) 100%); }
+  #damage.show { animation: dmg 0.45s ease-out; }
+  @keyframes dmg { 0% { opacity: 1; } 100% { opacity: 0; } }
+  /* banner */
+  #banner { position: absolute; left: 50%; top: 22%; transform: translateX(-50%) scale(0.9); text-align: center; opacity: 0; transition: opacity 0.25s, transform 0.25s; }
+  #banner.show { opacity: 1; transform: translateX(-50%) scale(1); }
+  #banner-title { font-size: 44px; font-weight: 900; letter-spacing: 3px; color: #ffd25a; text-shadow: 0 3px 0 #7a4a00, 0 6px 24px rgba(0,0,0,0.8); }
+  #banner-sub { font-size: 17px; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.9); margin-top: 4px; }
+  /* progress bar (survive / grab) */
+  #progress { position: absolute; left: 50%; bottom: 110px; transform: translateX(-50%); width: 340px; display: none; text-align: center; }
+  #progress-label { font-size: 14px; margin-bottom: 5px; text-shadow: 0 2px 6px #000; }
+  #progress .bar { height: 12px; }
+  #progress-fill { background: linear-gradient(90deg, #ffd25a, #ff9a3d); }
+  /* overlays */
+  .overlay { position: fixed; inset: 0; z-index: 10; display: none; align-items: center; justify-content: center;
+    background: linear-gradient(180deg, rgba(10,8,24,0.55) 0%, rgba(10,8,24,0.88) 100%); }
+  .overlay.show { display: flex; }
+  .card { max-width: 620px; margin: 20px; padding: 34px 40px; text-align: center; background: rgba(12,16,28,0.92);
+    border: 1px solid rgba(255,210,90,0.35); border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.7); }
+  .card h1 { font-size: 52px; letter-spacing: 6px; color: #ffd25a; text-shadow: 0 3px 0 #7a4a00; }
+  .card h2 { font-size: 34px; letter-spacing: 3px; color: #ff5347; }
+  .card h3 { font-size: 13px; letter-spacing: 4px; color: #9fd8ff; margin-bottom: 10px; }
+  .card p { font-size: 15px; line-height: 1.55; color: #dfe8f2; margin: 12px 0; }
+  .card .controls { font-size: 13px; line-height: 1.9; color: #aab8c8; margin: 14px 0; }
+  .card .controls b { color: #fff; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 4px; padding: 1px 7px; font-family: monospace; }
+  button { pointer-events: auto; cursor: pointer; font-size: 17px; font-weight: 800; letter-spacing: 1px;
+    color: #1a1200; background: linear-gradient(180deg, #ffe08a, #ffb52e); border: none; border-radius: 10px;
+    padding: 13px 34px; margin: 8px 6px 0; box-shadow: 0 4px 0 #a86f00, 0 8px 20px rgba(0,0,0,0.5); }
+  button:hover { filter: brightness(1.08); }
+  button:active { transform: translateY(2px); box-shadow: 0 2px 0 #a86f00; }
+  button.secondary { background: linear-gradient(180deg, #dfe8f2, #9fb4c8); color: #16202e; box-shadow: 0 4px 0 #5a6b7d; }
+  .tiny { font-size: 12px; color: #8a97a8; margin-top: 14px; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  <div id="topleft">
+    <canvas id="minimap" width="180" height="180"></canvas>
+    <div id="wanted" class="panel">☆☆☆☆☆</div>
+    <div id="objective" class="panel"></div>
+  </div>
+  <div id="topright">
+    <div id="cash" class="panel">$0</div>
+    <div id="clock" class="panel">17:40</div>
+    <div id="mission-label" class="panel"></div>
+  </div>
+  <div id="bottomleft">
+    <div class="bar-row"><span>HP</span><div class="bar"><div id="health-fill" style="width:100%"></div></div></div>
+    <div class="bar-row"><span>ARMOR</span><div class="bar"><div id="armor-fill" style="width:0%"></div></div></div>
+  </div>
+  <div id="bottomright" class="panel"><span id="ammo">12 / 999</span></div>
+  <div id="crosshair"></div>
+  <div id="hitmarker"></div>
+  <div id="damage"></div>
+  <div id="banner"><div id="banner-title"></div><div id="banner-sub"></div></div>
+  <div id="progress"><div id="progress-label"></div><div class="bar"><div id="progress-fill" style="width:0%"></div></div></div>
+</div>
+
+<div class="overlay" id="overlay-start">
+  <div class="card">
+    <h3>AN OPEN-WORLD CRIME STORY</h3>
+    <h1>CORAL BAY</h1>
+    <p id="story-text"></p>
+    <p class="controls">
+      <b>W A S D</b> move &nbsp; <b>Mouse</b> look &amp; aim &nbsp; <b>Click</b> shoot<br>
+      <b>E</b> steal / enter car &nbsp; <b>R</b> reload &nbsp; <b>Shift</b> run<br>
+      <b>P</b> pause &nbsp; <b>M</b> mute &nbsp; <b>Space</b> shoot
+    </p>
+    <button id="btn-start">NEW GAME</button>
+    <button id="btn-continue" class="secondary">CONTINUE</button>
+    <p class="tiny">A complete game in your browser. No network needed. Progress saves automatically.<br>
+    Coral Bay, its people and its story are entirely original — no content from any commercial game.</p>
+  </div>
+</div>
+
+<div class="overlay" id="overlay-pause">
+  <div class="card">
+    <h1 style="font-size:36px">PAUSED</h1>
+    <p>Your progress is saved. Coral Bay waits for no one — except right now.</p>
+    <button id="btn-resume">RESUME</button>
+    <button id="btn-restart" class="secondary">RESTART STORY</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay-wasted">
+  <div class="card">
+    <h2>WASTED</h2>
+    <p>Jax wakes up at St. Marina Hospital, $150 lighter. Big Sal's debt is still waiting.</p>
+    <button id="btn-respawn">GET UP — RESPAWN</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay-busted">
+  <div class="card">
+    <h2>BUSTED</h2>
+    <p>The Coral Bay PD books you, fines you $300, and lets you walk. The mission restarts.</p>
+    <button id="btn-respawn2">WALK OUT — RESPAWN</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay-complete">
+  <div class="card">
+    <h3>THE DEBT IS PAID</h3>
+    <h1 style="font-size:38px">STORY COMPLETE</h1>
+    <p id="complete-stats"></p>
+    <p>Free roam is open — steal cars, lose the cops, and enjoy the city you own now.</p>
+    <button id="btn-freeroam">FREE ROAM</button>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.min.js"
+  }
+}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

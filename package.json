@@ -1,0 +1,1 @@
+{"description":"CORAL BAY — an open-world crime story. Entry for make.fun gta6-01.","name":"coral-bay","private":true,"scripts":{"build":"node main.ts","start":"node serve.ts"},"type":"module","version":"1.0.0"}
