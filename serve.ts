@@ -17,7 +17,15 @@ const types = {
 
 const server = createServer(async (req, res) => {
   try {
-    const path = normalize(join(root, decodeURIComponent(new URL(req.url, 'http://x').pathname)));
+    const pathname = new URL(req.url, 'http://x').pathname;
+    // Browsers request /favicon.ico on every load; the game ships no icon,
+    // so answer 204 instead of a 404 to keep the console clean.
+    if (pathname === '/favicon.ico') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    const path = normalize(join(root, decodeURIComponent(pathname)));
     if (!path.startsWith(root)) {
       res.writeHead(403);
       res.end('Forbidden');
@@ -33,4 +41,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(8080, () => console.log('CORAL BAY at http://localhost:8080'));
+server.listen(8080, () => {
+  console.log('CORAL BAY at http://localhost:8080');
+  console.log('Serving game/ — open http://localhost:8080 in your browser');
+});
